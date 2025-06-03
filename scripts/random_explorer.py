@@ -3,10 +3,8 @@ import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import PoseStamped
 from nav2_msgs.action import NavigateToPose
-from nav2_msgs.srv import ComputePathToPose
 from rclpy.action import ActionClient
 from action_msgs.msg import GoalStatus
-from rclpy.action import ActionClient
 import random
 import math
 
@@ -18,10 +16,7 @@ class RandomExplorer(Node):
         self.declare_parameter('x_max', 2.0)
         self.declare_parameter('y_min', -2.0)
         self.declare_parameter('y_max', 2.0)
-        self.declare_parameter('num_attempts', 5)
 
-        self._client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
-        self._planner = self.create_client(ComputePathToPose, 'compute_path_to_pose')
         self._client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
         self.goal_active = False
         self.timer = self.create_timer(1.0, self._send_goal)
@@ -31,49 +26,19 @@ class RandomExplorer(Node):
             self.get_logger().info('Waiting for navigate_to_pose action server...')
             return
 
-        if not self._planner.wait_for_service(timeout_sec=0.1):
-            self.get_logger().info('Waiting for compute_path_to_pose service...')
-            return
         if self.goal_active:
             return
 
-        attempts = int(self.get_parameter('num_attempts').value)
         x_min = float(self.get_parameter('x_min').value)
         x_max = float(self.get_parameter('x_max').value)
         y_min = float(self.get_parameter('y_min').value)
         y_max = float(self.get_parameter('y_max').value)
 
-        for _ in range(attempts):
-            pose = PoseStamped()
-            pose.header.frame_id = 'map'
-            pose.header.stamp = self.get_clock().now().to_msg()
-            pose.pose.position.x = random.uniform(x_min, x_max)
-            pose.pose.position.y = random.uniform(y_min, y_max)
-            yaw = random.uniform(-math.pi, math.pi)
-            pose.pose.orientation.z = math.sin(yaw / 2.0)
-            pose.pose.orientation.w = math.cos(yaw / 2.0)
-
-            req = ComputePathToPose.Request()
-            req.goal = pose
-            req.use_start = False
-            future = self._planner.call_async(req)
-            rclpy.spin_until_future_complete(self, future, timeout_sec=2.0)
-            result = future.result()
-            if result and result.path.poses:
-                goal = NavigateToPose.Goal()
-                goal.pose = pose
-                self.goal_active = True
-                self._client.send_goal_async(goal).add_done_callback(self._goal_response)
-                return
-
-        self.get_logger().info('Failed to find a valid goal')
-        if self.goal_active:
-            return
         pose = PoseStamped()
         pose.header.frame_id = 'map'
         pose.header.stamp = self.get_clock().now().to_msg()
-        pose.pose.position.x = random.uniform(-2.0, 2.0)
-        pose.pose.position.y = random.uniform(-2.0, 2.0)
+        pose.pose.position.x = random.uniform(x_min, x_max)
+        pose.pose.position.y = random.uniform(y_min, y_max)
         yaw = random.uniform(-math.pi, math.pi)
         pose.pose.orientation.z = math.sin(yaw / 2.0)
         pose.pose.orientation.w = math.cos(yaw / 2.0)
