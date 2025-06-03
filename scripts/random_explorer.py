@@ -1,12 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-RandomExplorer ágil y parametrizable
- – Selecciona la celda libre más lejana dentro de ±60 ° respecto al heading actual.
- – Atasco (≥10 cm / 8 s) ⇒ Back-Up 20 cm y nuevo goal.
-Los topics de costmap y odometría se configuran con parámetros ROS.
-"""
-import rclpy, math, random, numpy as np, cv2
+import rclpy, math, numpy as np, cv2, random
 from rclpy.node        import Node
 from rclpy.action      import ActionClient
 from geometry_msgs.msg import PoseStamped, Point
@@ -14,176 +8,124 @@ from nav_msgs.msg      import OccupancyGrid, Odometry
 from nav2_msgs.action  import NavigateToPose, BackUp
 from action_msgs.msg   import GoalStatus
 
+STUCK_D, STUCK_T = 0.10, 8.0      # 10 cm / 8 s ⇒ Back-Up 0.2 m
+BACK_DIST        = 0.20
+FRONTIER_RES_M   = 0.25           # agrupa todo lo que esté <25 cm
+UNKNOWN          = -1
 
-class RandomExplorer(Node):
-    # ──────────────────────────────────────────────────────────────
+class FrontierExplorer(Node):
     def __init__(self):
-        super().__init__('random_explorer_fast')
+        super().__init__('frontier_explorer')
+        self.nav  = ActionClient(self, NavigateToPose, 'navigate_to_pose')
+        self.bkup = ActionClient(self, BackUp,        'back_up')
+        self.create_subscription(OccupancyGrid,'/global_costmap/costmap',
+                                 self._map_cb,10)
+        self.create_subscription(Odometry,'/odometry/filtered',
+                                 self._odom_cb,20)
+        self.info=None; self.grid=None; self.pose=None
+        self.goal_act=False; self.backing=False
+        self.last_mv=self.get_clock().now()
+        self.create_timer(1.0,self._tick)
 
-        # ── parámetros de topics ──────────────────────────────────
-        self.declare_parameter('costmap_topic',  '/local_costmap/costmap')
-        self.declare_parameter('odom_topic',     '/odometry/filtered')
-        costmap_topic = self.get_parameter('costmap_topic').value
-        odom_topic    = self.get_parameter('odom_topic').value
+    # ---------- Callbacks ----------
+    def _map_cb(self,msg):
+        self.info=msg.info
+        self.grid=np.frombuffer(msg.data,dtype=np.int8)\
+                    .reshape(msg.info.height,msg.info.width)
 
-        # ── action clients Nav2 ───────────────────────────────────
-        self.nav_cli  = ActionClient(self, NavigateToPose, 'navigate_to_pose')
-        self.back_cli = ActionClient(self, BackUp,        'back_up')
+    def _odom_cb(self,msg):
+        p=msg.pose.pose.position; q=msg.pose.pose.orientation
+        yaw=math.atan2(2*(q.w*q.z+q.x*q.y),1-2*(q.y*q.y+q.z*q.z))
+        if self.pose and math.hypot(p.x-self.pose[0],p.y-self.pose[1])>STUCK_D:
+            self.last_mv=self.get_clock().now()
+        self.pose=(p.x,p.y,yaw)
 
-        # ── subscripciones ────────────────────────────────────────
-        self.create_subscription(OccupancyGrid, costmap_topic,
-                                 self._map_cb, 10)
-        self.create_subscription(Odometry, odom_topic,
-                                 self._odom_cb, 20)
-
-        # ── buffers ───────────────────────────────────────────────
-        self.dist:  np.ndarray | None = None
-        self.free:  list[tuple[int, int]] = []
-        self.info   = None
-        self.pose   = None          # (x, y, yaw)
-
-        # ── estado de navegación ─────────────────────────────────
-        self.goal_hdl = None
-        self.goal_act = False
-        self.backing  = False
-
-        # ── detección de atasco ──────────────────────────────────
-        self.stuck_d     = 0.10   # 10 cm
-        self.stuck_t     = 8.0    # 8 s
-        self.last_move_t = self.get_clock().now()
-
-        # ── timer principal 1 Hz ─────────────────────────────────
-        self.create_timer(1.0, self._tick)
-
-    # ──────────────────────────────────────────────────────────────
-    # callbacks
-    # ──────────────────────────────────────────────────────────────
-    def _map_cb(self, msg: OccupancyGrid):
-        g = np.frombuffer(msg.data, dtype=np.int8) \
-             .reshape(msg.info.height, msg.info.width)
-        self.free = list(zip(*np.where(g < 10)))
-        self.info = msg.info
-        occ       = np.where(g >= 50, 0, 255).astype(np.uint8)
-        self.dist = cv2.distanceTransform(occ, cv2.DIST_L2, 3)
-
-    def _odom_cb(self, msg: Odometry):
-        p   = msg.pose.pose.position
-        ori = msg.pose.pose.orientation
-        yaw = math.atan2(2*(ori.w*ori.z + ori.x*ori.y),
-                         1 - 2*(ori.y**2 + ori.z**2))
-        if self.pose:
-            dx, dy = p.x - self.pose[0], p.y - self.pose[1]
-            if math.hypot(dx, dy) > self.stuck_d:
-                self.last_move_t = self.get_clock().now()
-        self.pose = (p.x, p.y, yaw)
-
-    # ──────────────────────────────────────────────────────────────
-    # bucle principal
-    # ──────────────────────────────────────────────────────────────
+    # ---------- Main loop ----------
     def _tick(self):
-        if self.backing:
-            return
+        if self.backing: return
+        if ( self.goal_act and
+             (self.get_clock().now()-self.last_mv).nanoseconds*1e-9>STUCK_T ):
+            self._do_backup(); return
+        if not self.goal_act: self._send_goal()
 
-        stalled = ( self.goal_act and
-                    (self.get_clock().now() - self.last_move_t).nanoseconds*1e-9
-                    > self.stuck_t )
+    # ---------- Frontier detection ----------
+    def _compute_frontiers(self):
+        if self.grid is None: return []
+        free=np.where(self.grid<10,1,0).astype(np.uint8)
+        # vecinos desconocidos
+        unk_mask=(self.grid==UNKNOWN).astype(np.uint8)
+        dil=cv2.dilate(unk_mask,np.ones((3,3),np.uint8))
+        frontiers=(dil & free).astype(np.uint8)
+        ys,xs=np.where(frontiers==1)
+        pts=list(zip(ys,xs))
+        return pts
 
-        if stalled:
-            self._do_backup()
-            return
+    def _cluster_frontiers(self,pts):
+        res=self.info.resolution
+        step=int(FRONTIER_RES_M/res)
+        if step<1: step=1
+        clusters={}
+        for y,x in pts:
+            key=(y//step,x//step)
+            clusters.setdefault(key,[]).append((y,x))
+        # devuelve el centro del cluster
+        ctrs=[]
+        for cl in clusters.values():
+            ys,xs=zip(*cl)
+            ctrs.append( (int(np.mean(ys)),int(np.mean(xs)),len(cl)) )
+        return ctrs
 
-        if not self.goal_act:
-            self._send_goal()
-
-    # ──────────────────────────────────────────────────────────────
-    # enviar objetivo
-    # ──────────────────────────────────────────────────────────────
+    # ---------- Choose & send goal ----------
     def _send_goal(self):
-        if not ( self.nav_cli.server_is_ready() and
-                 self.free and self.dist is not None and self.pose ):
+        if not (self.nav.server_is_ready() and self.info and self.pose): return
+        fpts=self._compute_frontiers()
+        if not fpts:
+            self.get_logger().info('Sin frontiers → exploración acabada')
             return
+        clusters=self._cluster_frontiers(fpts)
+        x0,y0,_=self.pose
+        # elige cluster más cercano
+        def dist_sq(c):
+            y,x,_=c
+            gx=x*self.info.resolution+self.info.origin.position.x
+            gy=y*self.info.resolution+self.info.origin.position.y
+            return (gx-x0)**2+(gy-y0)**2
+        cy,cx,_=min(clusters,key=dist_sq)
+        goal=self._cell_to_pose(cy,cx)
+        ng=NavigateToPose.Goal(); ng.pose=goal
+        self.goal_act=True
+        self.nav.send_goal_async(ng).add_done_callback(self._goal_resp)
 
-        x0, y0, yaw = self.pose
-        cos_y, sin_y = math.cos(yaw), math.sin(yaw)
+    def _cell_to_pose(self,y,x):
+        pose=PoseStamped()
+        pose.header.frame_id='map'
+        pose.header.stamp=self.get_clock().now().to_msg()
+        pose.pose.position.x= x*self.info.resolution+self.info.origin.position.x \
+                              + self.info.resolution/2
+        pose.pose.position.y= y*self.info.resolution+self.info.origin.position.y \
+                              + self.info.resolution/2
+        pose.pose.orientation.w=1.0
+        return pose
 
-        # puntuación: distancia más penalización si el ángulo > 60 °
-        def score(rc):
-            r, c = rc
-            x = c*self.info.resolution + self.info.origin.position.x
-            y = r*self.info.resolution + self.info.origin.position.y
-            dx, dy = x - x0, y - y0
-            ang = math.atan2(dy, dx) - yaw
-            ang = (ang + math.pi) % (2*math.pi) - math.pi  # [-π, π]
-            penalty = 0 if abs(ang) <= math.pi/3 else -999
-            return self.dist[r, c] + penalty
+    def _goal_resp(self,fut):
+        h=fut.result()
+        if not h or not h.accepted:
+            self.goal_act=False; return
+        h.get_result_async().add_done_callback(self._goal_done)
+    def _goal_done(self,fut):
+        self.goal_act=False
 
-        # intenta primero celdas “hacia delante”
-        cand = [rc for rc in self.free
-                  if abs(math.atan2( rc[0]*self.info.resolution - y0,
-                                     rc[1]*self.info.resolution - x0) - yaw)
-                         <= math.pi/3]
-        rc = max(cand, key=score) if cand else max(self.free, key=lambda rc: self.dist[rc])
-
-        # genera el PoseStamped
-        r, c = rc
-        pose = PoseStamped()
-        pose.header.frame_id = 'map'
-        pose.header.stamp = self.get_clock().now().to_msg()
-        pose.pose.position.x = c*self.info.resolution + self.info.origin.position.x \
-                               + self.info.resolution/2
-        pose.pose.position.y = r*self.info.resolution + self.info.origin.position.y \
-                               + self.info.resolution/2
-        yaw_g = random.uniform(-math.pi, math.pi)
-        pose.pose.orientation.z = math.sin(yaw_g/2)
-        pose.pose.orientation.w = math.cos(yaw_g/2)
-
-        goal = NavigateToPose.Goal(); goal.pose = pose
-        self.goal_act = True
-        self.nav_cli.send_goal_async(goal)\
-                    .add_done_callback(self._goal_resp)
-
-    def _goal_resp(self, fut):
-        self.goal_hdl = fut.result()
-        if not self.goal_hdl or not self.goal_hdl.accepted:
-            self.goal_act = False
-            return
-        self.goal_hdl.get_result_async().add_done_callback(self._goal_done)
-
-    def _goal_done(self, fut):
-        if fut.result().status != GoalStatus.STATUS_SUCCEEDED:
-            self.get_logger().info(f'Goal terminó con status {fut.result().status}')
-        self.goal_act = False
-
-    # ──────────────────────────────────────────────────────────────
-    # retroceso de emergencia
-    # ──────────────────────────────────────────────────────────────
+    # ---------- Back-Up ----------
     def _do_backup(self):
-        if not self.back_cli.server_is_ready():
-            self.get_logger().warn('BackUp no disponible')
-            self.goal_act = False
-            return
-        if self.goal_hdl:
-            self.goal_hdl.cancel_goal_async()
-        goal = BackUp.Goal()
-        goal.target = Point(x=-0.20, y=0.0, z=0.0)  # 20 cm atrás
-        goal.speed  = 0.10
-        goal.time_allowance.sec = 4
-        self.backing = True
-        self.back_cli.send_goal_async(goal)\
-                     .add_done_callback(self._backup_done)
+        if not self.bkup.server_is_ready(): self.goal_act=False; return
+        g=BackUp.Goal()
+        g.target=Point(x=-BACK_DIST,y=0,z=0); g.speed=0.10; g.time_allowance.sec=4
+        self.backing=True
+        self.bkup.send_goal_async(g).add_done_callback(
+            lambda _: (setattr(self,'backing',False),
+                       setattr(self,'goal_act',False),
+                       setattr(self,'last_mv',self.get_clock().now())) )
 
-    def _backup_done(self, _):
-        self.backing  = False
-        self.goal_act = False
-        self.last_move_t = self.get_clock().now()  # evita bucle inmediato
-
-
-# ────────────────────────────────────────────────────────────────
 def main(args=None):
-    rclpy.init(args=args)
-    rclpy.spin(RandomExplorer())
-    rclpy.shutdown()
-
-
-if __name__ == '__main__':
-    main()
+    rclpy.init(args=args); rclpy.spin(FrontierExplorer()); rclpy.shutdown()
+if __name__=='__main__': main()
