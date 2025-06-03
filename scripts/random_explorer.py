@@ -1,15 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-RandomExplorer mejorado:
-• Elige cada objetivo en la celda libre con mayor distancia a obstáculos.
-• Detecta atasco: si no avanza 3 s → gira 360° (Spin) y vuelve a planificar.
-• Si sigue sin salida tras el giro, da marcha atrás 30 cm (BackUp).
-"""
 import rclpy
 from rclpy.node        import Node
 from rclpy.action      import ActionClient
-from geometry_msgs.msg import PoseStamped, Point
+from geometry_msgs.msg import PoseStamped, Point, Twist
 from nav2_msgs.action  import NavigateToPose, BackUp, Spin
 from nav_msgs.msg      import OccupancyGrid, Odometry
 from action_msgs.msg   import GoalStatus
@@ -22,7 +16,7 @@ class RandomExplorer(Node):
     def __init__(self):
         super().__init__('random_explorer')
 
-        # Action clients Nav2
+        # Action servers Nav2
         self.nav_client    = ActionClient(self, NavigateToPose, 'navigate_to_pose')
         self.backup_client = ActionClient(self, BackUp,        'back_up')
         self.spin_client   = ActionClient(self, Spin,          'spin')
@@ -33,33 +27,40 @@ class RandomExplorer(Node):
         self.create_subscription(Odometry,        'odom',
                                  self._odom_cb,   20)
 
-        # Buffers
-        self.costmap_raw: np.ndarray | None = None
+        # Buffers costmap
         self.free_cells: list[tuple[int, int]] = []
         self.map_info   = None
+        self.dist: np.ndarray | None = None   # distance transform
 
-        # Estado de navegación
+        # Estado de acción
         self.goal_active  = False
         self.nav_goal_hdl = None
         self.backing_up   = False
         self.spinning     = False
+        self.need_spin    = False
 
-        # Detectar atasco mediante odometría
-        self.last_pose   = None
-        self.last_move_t = self.get_clock().now()
-        self.stuck_dist    = 0.02   # 2 cm sin avanzar cuenta como bloqueado
-        self.stuck_timeout = 3.0    # …durante 3 s
+        # Parámetros atasco
+        self.stuck_dist    = 0.05   # 5 cm
+        self.stuck_timeout = 6.0    # 6 s
+        self.spin_cooldown = 20.0   # mínimo 20 s entre Spins
+        self.last_pose     = None
+        self.last_move_t   = self.get_clock().now()
+        self.last_spin_t   = self.get_clock().now()
 
-        # Bucle principal
+        # Temporizador principal
         self.create_timer(1.0, self._tick)
 
     # ---------- callbacks ----------
     def _costmap_cb(self, msg: OccupancyGrid):
-        self.costmap_raw = np.frombuffer(msg.data, dtype=np.int8)  # 1-D
-        data = self.costmap_raw.reshape(msg.info.height, msg.info.width)
-        free = np.where(data < 10)
+        """Guarda celdas libres y pre-calcula distance-transform."""
+        grid = np.frombuffer(msg.data, dtype=np.int8).reshape(
+                   msg.info.height, msg.info.width)
+        free = np.where(grid < 10)
         self.free_cells = list(zip(free[0], free[1]))
         self.map_info   = msg.info
+
+        occ = np.where(grid >= 50, 0, 255).astype(np.uint8)
+        self.dist = cv2.distanceTransform(occ, cv2.DIST_L2, 3)
 
     def _odom_cb(self, msg: Odometry):
         p = msg.pose.pose.position
@@ -68,19 +69,20 @@ class RandomExplorer(Node):
                 self.last_move_t = self.get_clock().now()
         self.last_pose = p
 
-    # ---------- bucle de control ----------
+    # ---------- bucle principal ----------
     def _tick(self):
         if self.backing_up or self.spinning:
             return
 
-        # Atasco: sin progreso el tiempo umbral
+        now = self.get_clock().now()
         stalled = (self.goal_active and
-                   (self.get_clock().now() - self.last_move_t).nanoseconds * 1e-9
-                   > self.stuck_timeout)
+                   (now - self.last_move_t).nanoseconds * 1e-9 > self.stuck_timeout and
+                   (now - self.last_spin_t).nanoseconds * 1e-9 > self.spin_cooldown)
 
         if stalled:
-            self.get_logger().warn('Atasco detectado → giro 360°')
-            self._do_spin()
+            self.get_logger().warn('Atasco detectado → BackUp')
+            self._do_backup()
+            self.last_spin_t = now      # marca el inicio de la secuencia
             return
 
         if not self.goal_active:
@@ -88,11 +90,10 @@ class RandomExplorer(Node):
 
     # ---------- navegación ----------
     def _send_new_goal(self):
-        if not (self.nav_client.server_is_ready() and self.free_cells):
+        if not (self.nav_client.server_is_ready() and self.free_cells and self.dist is not None):
             return
 
-        # Seleccionar la celda libre con mayor distancia a obstáculos
-        r, c = self._pick_farthest_cell()
+        r, c = max(self.free_cells, key=lambda rc: self.dist[rc])
 
         pose = PoseStamped()
         pose.header.frame_id = 'map'
@@ -105,7 +106,7 @@ class RandomExplorer(Node):
         pose.pose.orientation.z = math.sin(yaw / 2)
         pose.pose.orientation.w = math.cos(yaw / 2)
 
-        goal = NavigateToPose.Goal();  goal.pose = pose
+        goal = NavigateToPose.Goal(); goal.pose = pose
         self.goal_active = True
         self.nav_client.send_goal_async(goal)\
                        .add_done_callback(self._nav_goal_response)
@@ -122,62 +123,51 @@ class RandomExplorer(Node):
             self.get_logger().info(f'Goal abortado (status {fut.result().status})')
         self.goal_active = False
 
-    # ---------- giro de recuperación ----------
-    def _do_spin(self, angle: float = 2 * math.pi):
-        if not self.spin_client.server_is_ready():
-            self.get_logger().warn('Servidor Spin no listo')
-            self._do_backup()          # fallback
+    # ---------- BackUp ----------
+    def _do_backup(self):
+        if not self.backup_client.server_is_ready():
+            self.get_logger().warn('Servidor BackUp no listo')
+            self._do_spin(angle=math.pi)   # fallback directo a spin
             return
         if self.nav_goal_hdl:
             self.nav_goal_hdl.cancel_goal_async()
+        goal = BackUp.Goal()
+        goal.target = Point(x=-0.30, y=0.0, z=0.0)
+        goal.speed  = 0.10
+        goal.time_allowance.sec = 5
+        self.need_spin = True
+        self.backing_up = True
+        self.backup_client.send_goal_async(goal)\
+                          .add_done_callback(self._backup_done)
+
+    def _backup_done(self, _):
+        self.backing_up = False
+        if self.need_spin:
+            self.need_spin = False
+            self._do_spin(angle=math.pi)   # media vuelta
+        else:
+            self.goal_active = False
+
+    # ---------- Spin ----------
+    def _do_spin(self, angle: float = math.pi):
+        if not self.spin_client.server_is_ready():
+            self.get_logger().warn('Servidor Spin no listo')
+            return
         goal = Spin.Goal()
         goal.target_yaw = angle
-        goal.time_allowance.sec = 10
+        goal.time_allowance.sec = 6
         self.spinning = True
         self.spin_client.send_goal_async(goal)\
             .add_done_callback(self._spin_done)
 
     def _spin_done(self, fut):
         self.spinning = False
-        result = fut.result().result
-        if result and result.total_elapsed_time.sec > 0:
+        res = fut.result().result
+        if res and res.total_elapsed_time.sec > 0:
             self.get_logger().info('Spin completado')
         else:
-            self.get_logger().warn('Spin fallido → BackUp')
-            self._do_backup()
+            self.get_logger().warn('Spin fallido')
         self.goal_active = False
-
-    # ---------- retroceso ----------
-    def _do_backup(self):
-        if not self.backup_client.server_is_ready():
-            self.get_logger().warn('Servidor BackUp no listo')
-            return
-        goal = BackUp.Goal()
-        goal.target = Point(x=-0.30, y=0.0, z=0.0)   # 30 cm hacia atrás
-        goal.speed  = 0.10
-        goal.time_allowance.sec = 5
-        self.backing_up = True
-        self.backup_client.send_goal_async(goal)\
-                          .add_done_callback(self._backup_done)
-
-    def _backup_done(self, _):
-        self.backing_up  = False
-        self.goal_active = False
-        self.get_logger().info('BackUp completado')
-
-    # ---------- utilidades ----------
-    def _pick_farthest_cell(self) -> tuple[int, int]:
-        """Distancia euclídea a obstáculos mediante OpenCV distance transform."""
-        if self.costmap_raw is None or not self.free_cells:
-            raise RuntimeError('Costmap todavía no recibido')
-        grid = self.costmap_raw.reshape(self.map_info.height, self.map_info.width)
-
-        # Ocupado >=50 → 0, libre → 255
-        occ = np.where(grid >= 50, 0, 255).astype(np.uint8)
-        dist = cv2.distanceTransform(occ, cv2.DIST_L2, 3)  # píxeles
-
-        # Elige la celda libre cuyo valor en 'dist' sea máximo
-        return max(self.free_cells, key=lambda rc: dist[rc])
 
 # ---------- main ----------
 def main(args=None):
@@ -190,4 +180,3 @@ def main(args=None):
 
 if __name__ == '__main__':
     main()
-
