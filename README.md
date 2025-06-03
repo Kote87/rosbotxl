@@ -84,7 +84,21 @@ To ensure proper user configuration, review the content of the `.env` file and s
 - **`SAVE_MAP_PERIOD`** - period of time for autosave map (set `0` to disable),
 - **`CONTROLLER`** - choose the navigation controller type,
 
-### 🤖 Step 4: Running Navigation & Mapping
+### 🛰️ Step 4: Configuring the RPLidar S3
+
+The lidar is connected on `/dev/ttyUSB1`. Create a udev rule so it appears as
+`/dev/ttyRPLIDAR` every time the robot boots:
+
+```bash
+sudo bash -c 'echo "SUBSYSTEM==\"tty\", ATTRS{idVendor}==\"10c4\", ATTRS{idProduct}==\"ea60\", SYMLINK+=\"ttyRPLIDAR\"" > /etc/udev/rules.d/99-rplidar.rules'
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+```
+
+The Docker setup maps this device into the `rplidar` container and launches the
+driver at 1,000,000&nbsp;baud.
+
+### 🤖 Step 5: Running Navigation & Mapping
 
 1. Connect to the ROSbot.
 
@@ -112,7 +126,7 @@ To ensure proper user configuration, review the content of the `.env` file and s
    # or "just rosbot"
    ```
 
-### 🚗 Step 5: Control the ROSbot from a Web Browser
+### 🚗 Step 6: Control the ROSbot from a Web Browser
 
 Open the **Google Chrome** browser on your laptop and navigate to:
 
