@@ -5,12 +5,20 @@ from geometry_msgs.msg import PoseStamped
 from nav2_msgs.action import NavigateToPose
 from nav2_msgs.srv import ComputePathToPose
 from rclpy.action import ActionClient
+from action_msgs.msg import GoalStatus
 import random
 import math
 
 class RandomExplorer(Node):
     def __init__(self):
         super().__init__('random_explorer')
+        # Parameters defining the area for random goals
+        self.declare_parameter('x_min', -2.0)
+        self.declare_parameter('x_max', 2.0)
+        self.declare_parameter('y_min', -2.0)
+        self.declare_parameter('y_max', 2.0)
+        self.declare_parameter('num_attempts', 5)
+
         self._client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
         self._planner = self.create_client(ComputePathToPose, 'compute_path_to_pose')
         self.goal_active = False
@@ -26,12 +34,18 @@ class RandomExplorer(Node):
         if self.goal_active:
             return
 
-        for _ in range(5):
+        attempts = int(self.get_parameter('num_attempts').value)
+        x_min = float(self.get_parameter('x_min').value)
+        x_max = float(self.get_parameter('x_max').value)
+        y_min = float(self.get_parameter('y_min').value)
+        y_max = float(self.get_parameter('y_max').value)
+
+        for _ in range(attempts):
             pose = PoseStamped()
             pose.header.frame_id = 'map'
             pose.header.stamp = self.get_clock().now().to_msg()
-            pose.pose.position.x = random.uniform(-2.0, 2.0)
-            pose.pose.position.y = random.uniform(-2.0, 2.0)
+            pose.pose.position.x = random.uniform(x_min, x_max)
+            pose.pose.position.y = random.uniform(y_min, y_max)
             yaw = random.uniform(-math.pi, math.pi)
             pose.pose.orientation.z = math.sin(yaw / 2.0)
             pose.pose.orientation.w = math.cos(yaw / 2.0)
@@ -60,7 +74,11 @@ class RandomExplorer(Node):
         goal_handle.get_result_async().add_done_callback(self._result_callback)
 
     def _result_callback(self, future):
-        self.get_logger().info('Goal completed')
+        result = future.result()
+        if result.status == GoalStatus.STATUS_SUCCEEDED:
+            self.get_logger().info('Goal succeeded')
+        else:
+            self.get_logger().info(f'Goal ended with status {result.status}')
         self.goal_active = False
 
 
