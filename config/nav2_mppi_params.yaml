@@ -196,7 +196,7 @@ controller_server:
         collision_cost: 10000.0
         collision_margin_distance: 0.10
         near_goal_distance: 0.5
-        inflation_radius: 0.40 # (only in Humble)
+        inflation_radius: 0.20 # (only in Humble)
         cost_scaling_factor: 3.0 # (only in Humble)
       PathAlignCritic:
         enabled: true
@@ -264,7 +264,7 @@ local_costmap:
         plugin: nav2_costmap_2d::InflationLayer
         enabled: true
         cost_scaling_factor: 3.0
-        inflation_radius: 0.40
+        inflation_radius: 0.20
 
       always_send_full_costmap: true
 
@@ -308,7 +308,7 @@ global_costmap:
       inflation_layer:
         plugin: nav2_costmap_2d::InflationLayer
         cost_scaling_factor: 3.0
-        inflation_radius: 0.40
+        inflation_radius: 0.20
       always_send_full_costmap: true
   global_costmap_client:
     ros__parameters:
