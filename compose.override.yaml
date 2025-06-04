@@ -1,39 +1,21 @@
 version: "3.8"
 
 services:
-  # ──────────────────────────  EXPLORACIÓN  ──────────────────────────
-  explore:
-    image: husarion/rosbot-xl:humble
-    network_mode: "service:navigation"
-    depends_on: [navigation]
-    command: >
-      bash -c "
-        source /ros2_ws/install/setup.bash &&
-        apt update &&
-        mkdir -p /etc/apt/keyrings &&
-        curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.asc \
-             -o /etc/apt/keyrings/ros.asc &&
-        apt update &&
-        apt install -y --no-install-recommends ros-humble-explore-lite &&
-        ros2 run explore_lite explore --ros-args -r __ns:=/
-      "
-    restart: unless-stopped
-
-  # ────────────────────────────  CÁMARA OAK  ──────────────────────────
+  # ──────────── CÁMARA OAK ────────────
   oak:
     image: luxonis/depthai-ros:v2.11.0-humble
-    privileged: true                    # acceso completo a USB
+    privileged: true               # acceso completo a USB
     network_mode: "service:navigation"
     depends_on: [navigation]
     devices:
-      - /dev/bus/usb:/dev/bus/usb
+      - /dev/bus/usb:/dev/bus/usb   # pasa /dev/bus/usb al contenedor
     command: >
-      bash -c "ros2 launch depthai_ros_driver camera.launch.py \
-        pipeline_type:=RGB \
-        rgb_resolution:=400P \
-        rgb_fps:=15 \
-        nn_type:=none \
-        rectify_color:=false \
-        enable_depth:=false \
-        usb2_mode:=true"
+      ros2 launch depthai_ros_driver camera.launch.py
+      pipeline_type:=RGB
+      rgb_resolution:=400P
+      rgb_fps:=6
+      nn_type:=none
+      rectify_color:=false
+      enable_depth:=false
+      usb2_mode:=true
     restart: unless-stopped
