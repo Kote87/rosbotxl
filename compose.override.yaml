@@ -1,16 +1,16 @@
 version: "3.8"
 
 services:
-  # --- cámara OAK-D-Pro --------------------------------------------------
   oak:
-    image: luxonis/depthai-ros-driver:humble-latest   # driver oficial ROS 2
-    privileged: true                                  # acceso USB completo
-    network_mode: "service:navigation"                # mismo ROS_DOMAIN_ID
+    image: luxonis/depthai-ros:v2.11.0-humble   # imagen correcta
+    network_mode: "service:navigation"          # comparte el mismo ROS DOMAIN
     depends_on: [navigation]
     devices:
-      - "/dev/bus/usb:/dev/bus/usb"                   # pasa todo el bus USB
+      - /dev/bus/usb:/dev/bus/usb               # pasa el dispositivo USB al contenedor
+    environment:
+      - RMW_IMPLEMENTATION=rmw_fastrtps_cpp
     command: >
-      bash -c '
+      bash -c "
       source /opt/ros/humble/setup.bash &&
       ros2 launch depthai_ros_driver camera.launch.py
         pipeline_type:=RGB
@@ -20,5 +20,5 @@ services:
         rectify_color:=false
         enable_depth:=false
         usb2_mode:=false
-      '
+      "
     restart: unless-stopped
