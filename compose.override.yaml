@@ -2,26 +2,23 @@ version: "3.8"
 
 services:
   oak:
-    image: luxonis/depthai-ros:v2.11.0-humble   # imagen oficial de DepthAI para ROS 2 Humble
-    privileged: true                            # acceso completo al bus USB
-    network_mode: "service:navigation"          # comparte el mismo ROS DOMAIN
+    image: luxonis/depthai-ros:v2.11.0-humble
+    network_mode: "service:navigation"     # comparte el mismo ROS DOMAIN
     depends_on: [navigation]
     devices:
-      - /dev/bus/usb:/dev/bus/usb               # pasa el dispositivo USB al contenedor
+      - /dev/bus/usb:/dev/bus/usb          # pasa la cámara USB al contenedor
     environment:
       - RMW_IMPLEMENTATION=rmw_fastrtps_cpp
     command: >
       bash -c "
-      apt update -qq &&
-      apt install -y --no-install-recommends usbutils &&     # añade lsusb dentro del contenedor
-      source /opt/ros/humble/setup.bash &&
-      ros2 launch depthai_ros_driver camera.launch.py
-        pipeline_type:=RGB
-        rgb_resolution:=400P
-        rgb_fps:=15
-        nn_type:=none
-        rectify_color:=false
-        enable_depth:=false
-        usb2_mode:=false
+        apt update -qq &&
+        mkdir -p /etc/apt/keyrings &&
+        curl -fsSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.asc \
+             -o /etc/apt/keyrings/ros.asc &&
+        apt update -qq &&
+        source /opt/ros/humble/setup.bash &&
+        ros2 launch depthai_ros_driver camera.launch.py \
+          pipeline_type:=RGB rgb_resolution:=400P rgb_fps:=15 \
+          nn_type:=none rectify_color:=false enable_depth:=false usb2_mode:=false
       "
     restart: unless-stopped
