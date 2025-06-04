@@ -1,27 +1,46 @@
 version: "3.8"
 
 services:
-  oak:
-    image: luxonis/depthai-ros:v2.11.0-humble          # imagen oficial
-    network_mode: "service:navigation"                 # mismo ROS DOMAIN
+  # ────────────────────────────────────────────────────────────────────────
+  # Exploración automática (explore_lite)
+  # ────────────────────────────────────────────────────────────────────────
+  explore:
+    image: husarion/rosbot-xl:humble
+    network_mode: "service:navigation"
     depends_on: [navigation]
-    # acceso pleno al bus USB del host
-    privileged: true
+    command: >
+      bash -c "
+        source /ros2_ws/install/setup.bash &&
+        apt update &&
+        mkdir -p /etc/apt/keyrings &&
+        curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.asc \
+             -o /etc/apt/keyrings/ros.asc &&
+        apt update &&
+        apt install -y --no-install-recommends ros-humble-explore-lite &&
+        ros2 run explore_lite explore --ros-args -r __ns:=/
+      "
+    restart: unless-stopped
+
+  # ────────────────────────────────────────────────────────────────────────
+  # OAK-D-Pro: cámara RGB (USB2 o USB3)
+  # ────────────────────────────────────────────────────────────────────────
+  oak:
+    image: luxonis/depthai-ros:v2.11.0-humble
+    privileged: true                    # acceso completo al bus USB
+    network_mode: "service:navigation"  # mismo ROS Domain que Nav2
+    depends_on: [navigation]
     devices:
-      - /dev/bus/usb:/dev/bus/usb
-    environment:
-      - RMW_IMPLEMENTATION=rmw_fastrtps_cpp
-      # evita que el entrypoint intente apt update
-      - DISABLE_ENV_INSTALL=1
-    entrypoint: ["/bin/bash", "-c"]                    # machacamos el entrypoint
+      - /dev/bus/usb:/dev/bus/usb       # pasa dispositivos USB al contenedor
     command: |
-      source /opt/ros/humble/setup.bash && \
-      ros2 launch depthai_ros_driver camera.launch.py \
-        pipeline_type:=RGB \
-        rgb_resolution:=400P \
-        rgb_fps:=15 \
-        nn_type:=none \
-        rectify_color:=false \
-        enable_depth:=false \
-        usb2_mode:=false
+      bash -c "
+        source /opt/ros/humble/setup.bash &&
+        ros2 launch depthai_ros_driver camera.launch.py \
+          pipeline_type:=RGB             \
+          rgb_resolution:=400P           \
+          rgb_fps:=15                    \
+          nn_type:=none                  \
+          rectify_color:=false           \
+          enable_depth:=false            \
+          usb2_mode:=true                # pon «false» si usas puerto USB3
+      "
     restart: unless-stopped
