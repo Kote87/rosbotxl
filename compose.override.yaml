@@ -1,9 +1,7 @@
 version: "3.8"
 
 services:
-  # ────────────────────────────────────────────────────────────────────────
-  # Exploración automática (explore_lite)
-  # ────────────────────────────────────────────────────────────────────────
+  # ──────────────────────────  EXPLORACIÓN  ──────────────────────────
   explore:
     image: husarion/rosbot-xl:humble
     network_mode: "service:navigation"
@@ -21,26 +19,21 @@ services:
       "
     restart: unless-stopped
 
-  # ────────────────────────────────────────────────────────────────────────
-  # OAK-D-Pro: cámara RGB (USB2 o USB3)
-  # ────────────────────────────────────────────────────────────────────────
+  # ────────────────────────────  CÁMARA OAK  ──────────────────────────
   oak:
     image: luxonis/depthai-ros:v2.11.0-humble
-    privileged: true                    # acceso completo al bus USB
-    network_mode: "service:navigation"  # mismo ROS Domain que Nav2
+    privileged: true                    # acceso completo a USB
+    network_mode: "service:navigation"
     depends_on: [navigation]
     devices:
-      - /dev/bus/usb:/dev/bus/usb       # pasa dispositivos USB al contenedor
-    command: |
-      bash -c "
-        source /opt/ros/humble/setup.bash &&
-        ros2 launch depthai_ros_driver camera.launch.py \
-          pipeline_type:=RGB             \
-          rgb_resolution:=400P           \
-          rgb_fps:=15                    \
-          nn_type:=none                  \
-          rectify_color:=false           \
-          enable_depth:=false            \
-          usb2_mode:=true                # pon «false» si usas puerto USB3
-      "
+      - /dev/bus/usb:/dev/bus/usb
+    command: >
+      bash -c "ros2 launch depthai_ros_driver camera.launch.py \
+        pipeline_type:=RGB \
+        rgb_resolution:=400P \
+        rgb_fps:=15 \
+        nn_type:=none \
+        rectify_color:=false \
+        enable_depth:=false \
+        usb2_mode:=true"
     restart: unless-stopped
