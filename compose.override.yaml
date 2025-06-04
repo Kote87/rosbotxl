@@ -2,18 +2,26 @@ version: "3.8"
 
 services:
   oak:
-    image: luxonis/depthai-ros:v2.11.0-humble
-    network_mode: "service:navigation"
+    image: luxonis/depthai-ros:v2.11.0-humble          # imagen oficial
+    network_mode: "service:navigation"                 # mismo ROS DOMAIN
     depends_on: [navigation]
+    # acceso pleno al bus USB del host
+    privileged: true
     devices:
       - /dev/bus/usb:/dev/bus/usb
     environment:
       - RMW_IMPLEMENTATION=rmw_fastrtps_cpp
-    command: >
-      bash -c '
-      source /opt/ros/humble/setup.bash &&
+      # evita que el entrypoint intente apt update
+      - DISABLE_ENV_INSTALL=1
+    entrypoint: ["/bin/bash", "-c"]                    # machacamos el entrypoint
+    command: |
+      source /opt/ros/humble/setup.bash && \
       ros2 launch depthai_ros_driver camera.launch.py \
-        pipeline_type:=RGB rgb_resolution:=400P rgb_fps:=15 \
-        nn_type:=none rectify_color:=false enable_depth:=false usb2_mode:=false
-      '
+        pipeline_type:=RGB \
+        rgb_resolution:=400P \
+        rgb_fps:=15 \
+        nn_type:=none \
+        rectify_color:=false \
+        enable_depth:=false \
+        usb2_mode:=false
     restart: unless-stopped
