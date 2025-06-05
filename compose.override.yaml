@@ -1,14 +1,21 @@
 version: "3.8"
 
 services:
+  # --- Cámara OAK ---
   oak:
     image: luxonis/depthai-ros:v2.11.0-humble
-    privileged: true                 # acceso completo al USB
+    privileged: true
     network_mode: "service:navigation"
-    depends_on: [navigation]
     devices:
-      - /dev/bus/usb:/dev/bus/usb    # pasa todo el bus USB
+      - /dev/bus/usb:/dev/bus/usb
     command: >
       bash -c "source /opt/ros/humble/setup.bash &&
                ros2 launch depthai_ros_driver camera.launch.py"
     restart: unless-stopped
+
+  # --- Bridge de navegación + Foxglove ---
+  navigation:
+    depends_on:
+      - rosbot   # contenedor base con sensores internos
+      - rplidar  # láser 2-D
+      - oak      # cámara OAK que acabamos de añadir
