@@ -16,7 +16,6 @@ services:
     restart: unless-stopped
 
   # --- Contenedor navigation (foxglove_bridge dentro) ---
-  navigation:
     # ➋ AÑADE la cámara a sus dependencias  
     #    (rosbot y rplidar ya vienen en el compose base)
   
