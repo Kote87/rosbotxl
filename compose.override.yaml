@@ -19,5 +19,4 @@ services:
   navigation:
     # ➋ AÑADE la cámara a sus dependencias  
     #    (rosbot y rplidar ya vienen en el compose base)
-    depends_on:
-      - oak
+  
