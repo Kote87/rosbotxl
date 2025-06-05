@@ -3,7 +3,8 @@ version: "3.8"
 services:
   # --- Cámara OAK ---
   oak:
-    depends_on: null                # rompe el ciclo (ya NO depende de navigation)
+    # ← ESTA línea borra el depends_on que viene del compose.yaml base
+    depends_on: []
     image: luxonis/depthai-ros:v2.11.0-humble
     privileged: true
     network_mode: "service:navigation"
@@ -17,6 +18,6 @@ services:
   # --- Bridge de navegación + Foxglove ---
   navigation:
     depends_on:
-      - rosbot     # contenedor base
+      - rosbot     # nodo base
       - rplidar    # láser 2-D
-      - oak        # cámara OAK (asegura que exista antes de arrancar el bridge)
+      - oak        # cámara OAK (queremos que exista antes de lanzar el bridge)
