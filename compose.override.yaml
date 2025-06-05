@@ -3,6 +3,7 @@ version: "3.8"
 services:
   # --- Cámara OAK ---
   oak:
+    depends_on: null                # rompe el ciclo (ya NO depende de navigation)
     image: luxonis/depthai-ros:v2.11.0-humble
     privileged: true
     network_mode: "service:navigation"
@@ -16,6 +17,6 @@ services:
   # --- Bridge de navegación + Foxglove ---
   navigation:
     depends_on:
-      - rosbot   # contenedor base con sensores internos
-      - rplidar  # láser 2-D
-      - oak      # cámara OAK que acabamos de añadir
+      - rosbot     # contenedor base
+      - rplidar    # láser 2-D
+      - oak        # cámara OAK (asegura que exista antes de arrancar el bridge)
