@@ -1,21 +1,14 @@
 version: "3.8"
 
 services:
-  # ──────────── CÁMARA OAK ────────────
   oak:
     image: luxonis/depthai-ros:v2.11.0-humble
-    privileged: true               # acceso completo a USB
+    privileged: true                 # acceso completo al USB
     network_mode: "service:navigation"
     depends_on: [navigation]
     devices:
-      - /dev/bus/usb:/dev/bus/usb   # pasa /dev/bus/usb al contenedor
+      - /dev/bus/usb:/dev/bus/usb    # pasa todo el bus USB
     command: >
-      ros2 launch depthai_ros_driver camera.launch.py
-      pipeline_type:=RGB
-      rgb_resolution:=400P
-      rgb_fps:=6
-      nn_type:=none
-      rectify_color:=false
-      enable_depth:=false
-      usb2_mode:=true
+      bash -c "source /opt/ros/humble/setup.bash &&
+               ros2 launch depthai_ros_driver camera.launch.py"
     restart: unless-stopped
