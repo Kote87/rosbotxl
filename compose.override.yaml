@@ -3,8 +3,7 @@ version: "3.8"
 services:
   # --- Cámara OAK ---
   oak:
-    # ← ESTA línea borra el depends_on que viene del compose.yaml base
-    depends_on: []
+    depends_on: []                # ← anula la dependencia que viene de compose.yaml
     image: luxonis/depthai-ros:v2.11.0-humble
     privileged: true
     network_mode: "service:navigation"
@@ -15,9 +14,9 @@ services:
                ros2 launch depthai_ros_driver camera.launch.py"
     restart: unless-stopped
 
-  # --- Bridge de navegación + Foxglove ---
+  # --- Contenedor navigation (foxglove_bridge dentro) ---
   navigation:
-    depends_on:
-      - rosbot     # nodo base
-      - rplidar    # láser 2-D
-      - oak        # cámara OAK (queremos que exista antes de lanzar el bridge)
+    # aquí NO añadimos oak para evitar el ciclo;
+    # mantenemos sólo lo que ya tiene en el fichero base
+    # (normalmente rosbot y rplidar).  Si ese bloque no
+    # existe en tu override, déjalo tal cual.
