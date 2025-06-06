@@ -1,10 +1,8 @@
 version: "3.8"
 
 services:
-  # --- Cámara OAK ---
   oak:
-    # ➊ ANULA la dependencia que trae el YAML base
-    depends_on: {}          # ← mapa vacío: elimina "oak -> navigation"
+    depends_on: {}          # rompe la arista 'oak -> navigation'
     image: luxonis/depthai-ros:v2.11.0-humble
     privileged: true
     network_mode: "service:navigation"
@@ -15,7 +13,10 @@ services:
                ros2 launch depthai_ros_driver camera.launch.py"
     restart: unless-stopped
 
-  # --- Contenedor navigation (foxglove_bridge dentro) ---
-    # ➋ AÑADE la cámara a sus dependencias  
-    #    (rosbot y rplidar ya vienen en el compose base)
-  
+  navigation:
+    image: ghcr.io/foxglove/foxglove_bridge:0.10.2-humble
+    command: >
+      bash -c "source /opt/ros/humble/setup.bash &&
+               ros2 run foxglove_bridge foxglove_bridge
+               --address 0.0.0.0 --port 8765 --auto-start"
+
