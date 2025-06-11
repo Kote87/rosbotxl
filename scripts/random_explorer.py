@@ -1,237 +1,229 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Explorador que ignora lo que hay detrás (±90°) y solo avanza.
- - Suscribe costmap global / global_costmap/costmap
- - Suscribe odometría /odometry/filtered
- - Filtra obstáculos "detrás" del robot
- - Escoge meta en 180° frontales (±90°) y la envía a Nav2
- - No hay maniobras de back-up ni spin
- - Si no encuentra celdas libres delante, no avanza
+Frontier120Explorer
+Explora todo el mapa usando frontiers, con haz frontal ±60°.
+ - Usa Nav2 (NavigateToPose) para ir a cada frontier.
+ - Gira 60° pasos hasta encontrar frontiers en el haz.
+ - No publica BackUp / Spin; giros los hace vía /cmd_vel.
+ - Cuando no quedan frontiers tras un giro completo, se queda
+   rotando lentamente (modo 'stand‑by de explorador').
 """
 
-import rclpy
-from rclpy.node import Node
+import rclpy, math, numpy as np, cv2
+from rclpy.node  import Node
 from rclpy.action import ActionClient
-import math
-import numpy as np
-import cv2
-
-from geometry_msgs.msg import PoseStamped, Quaternion
+from geometry_msgs.msg import PoseStamped, Quaternion, Twist
 from nav_msgs.msg      import OccupancyGrid, Odometry
 from nav2_msgs.action  import NavigateToPose
 from action_msgs.msg   import GoalStatus
 
-# ----- Parámetros de exploración -----
-MIN_DIST_FROM_OBST = 0.3           # Mínimo 30 cm de distancia al obstáculo
-MAX_ANG            = math.radians(90)  # ±90° => 180° en total
-MAP_FREE_THRESHOLD = 10            # celdas < 10 se consideran libres
+# ---------- Parámetros ---------------------------------------------
+FOV_DEG         = 120                # campo frontal total (±60°)
+FOV_RAD         = math.radians(FOV_DEG/2)   # 60° en rad
+MIN_FRONTIER_CLEARANCE = 0.25        # m – distancia mínima a obsts
+MAP_FREE_THR    = 10                 # grid <10 => libre
+ROT_STEP_DEG    = 60                 # giro incremental cuando no hay frontier
+ROT_SPEED       = 0.5                # rad/s (cmd_vel)
+GOAL_RETRY_SEC  = 3.0                # espera entre goals fallidos
 
-def quaternion_from_yaw(yaw: float) -> Quaternion:
+# ---------- Ayudas --------------------------------------------------
+def yaw_from_quat(q):
+    return math.atan2(2*(q.w*q.z + q.x*q.y),
+                      1 - 2*(q.y*q.y + q.z*q.z))
+
+def quat_from_yaw(y):
     q = Quaternion()
-    q.z = math.sin(yaw/2)
-    q.w = math.cos(yaw/2)
+    q.z = math.sin(y/2)
+    q.w = math.cos(y/2)
     return q
 
-class ForwardExplorer(Node):
+# ---------- Nodo principal -----------------------------------------
+class Frontier120Explorer(Node):
     def __init__(self):
-        super().__init__('forward_explorer')
-        # Action client para NavigateToPose (Nav2)
+        super().__init__('frontier120_explorer')
+
+        # Nav2 NavigateToPose
         self.nav_cli = ActionClient(self, NavigateToPose, 'navigate_to_pose')
+
+        # cmd_vel p/ giros manuales
+        self.cmd_pub = self.create_publisher(Twist, '/cmd_vel', 10)
 
         # Subscripciones
         self.create_subscription(OccupancyGrid, '/global_costmap/costmap',
-                                 self._map_cb, 10)
+                                 self.map_cb, 10)
         self.create_subscription(Odometry, '/odometry/filtered',
-                                 self._odom_cb, 20)
+                                 self.odom_cb, 20)
 
         # Buffers
-        self.grid   = None
-        self.info   = None
-        self.dist   = None
-        self.pose   = None   # (x, y, yaw)
-        self.free   = []     # celdas consideradas libres
+        self.grid = None         # np.int8 OccupancyGrid
+        self.info = None         # Metadata del mapa
+        self.pose = None         # (x,y,yaw)
+        self.dist = None         # distanceTransform
+        self.frontiers = []      # lista de (r,c)
         self.goal_active = False
 
-        # Timer principal (1 Hz)
-        self.create_timer(1.0, self._tick)
+        # Giro incremental
+        self.rotating      = False
+        self.rot_start_sec = 0.0
+        self.rot_target    = 0.0      # rad
+        self.yaw_start     = 0.0
 
-    # ------------------------------------------------------------------
-    #                  CALLBACKS
-    # ------------------------------------------------------------------
-    def _map_cb(self, msg: OccupancyGrid):
-        """
-        Recibimos el costmap global.
-        1) Convertir a array numpy.
-        2) Filtrar obstáculos traseros (±90°).
-        3) Actualizar 'free' y 'dist' con distanceTransform.
-        """
+        # Timer principal 1 Hz
+        self.create_timer(1.0, self.tick)
+
+    # ---------------- Costmap ---------------------------------------
+    def map_cb(self, msg: OccupancyGrid):
         self.info = msg.info
-        w = self.info.width
-        h = self.info.height
+        h, w = msg.info.height, msg.info.width
+        grid = np.frombuffer(msg.data, dtype=np.int8).reshape(h, w)
 
-        # Convertimos a numpy
-        grid_np = np.frombuffer(msg.data, dtype=np.int8).reshape(h, w)
-
-        # Si tenemos la pose, ignorar obst. detrás
+        # Si conozco mi pose → ignoro obstáculos detrás
         if self.pose:
             x_r, y_r, yaw_r = self.pose
+            res = self.info.resolution
             for r in range(h):
                 for c in range(w):
-                    if grid_np[r, c] >= 50:
-                        # coordenadas en el mundo
-                        wx = c*self.info.resolution + self.info.origin.position.x + self.info.resolution/2
-                        wy = r*self.info.resolution + self.info.origin.position.y + self.info.resolution/2
+                    if grid[r, c] >= 50:           # obstáculo
+                        wx = c*res + self.info.origin.position.x + res/2
+                        wy = r*res + self.info.origin.position.y + res/2
+                        dx, dy = wx - x_r, wy - y_r
+                        ang = math.atan2(dy, dx) - yaw_r
+                        ang = (ang + math.pi) % (2*math.pi) - math.pi
+                        if abs(ang) > math.pi/2:   # detrás
+                            grid[r, c] = 0         # se vuelve libre
 
-                        dx = wx - x_r
-                        dy = wy - y_r
+        self.grid = grid
+        self.dist = cv2.distanceTransform(
+            np.where(grid >= 50, 0, 255).astype(np.uint8),
+            cv2.DIST_L2, 3)
 
-                        angle = math.atan2(dy, dx) - yaw_r
-                        # normalizar
-                        while angle > math.pi:
-                            angle -= 2*math.pi
-                        while angle < -math.pi:
-                            angle += 2*math.pi
+        # ---------- detectar frontiers ----------
+        self.frontiers = []
+        if self.pose is None:
+            return
+        x_r, y_r, yaw_r = self.pose
+        res = self.info.resolution
+        for r in range(1, h-1):
+            for c in range(1, w-1):
+                if grid[r, c] < MAP_FREE_THR:
+                    nbr = grid[r-1:r+2, c-1:c+2]
+                    if np.any(nbr == -1):          # vecino desconocido
+                        # coordenadas mundo
+                        wx = c*res + self.info.origin.position.x + res/2
+                        wy = r*res + self.info.origin.position.y + res/2
+                        dx, dy = wx - x_r, wy - y_r
+                        ang = math.atan2(dy, dx) - yaw_r
+                        ang = (ang + math.pi) % (2*math.pi) - math.pi
+                        if abs(ang) <= FOV_RAD:    # dentro ±60°
+                            # distancia en metros a obsts
+                            d_clear = self.dist[r, c]*res
+                            if d_clear >= MIN_FRONTIER_CLEARANCE:
+                                self.frontiers.append((r, c))
 
-                        # Si está fuera de ±90° => está "detrás" => anular
-                        if abs(angle) > math.pi/2:
-                            grid_np[r, c] = 0  # marcar como libre
-
-        # Guardamos
-        self.grid = grid_np
-
-        # Celdas libres
-        self.free = list(zip(*np.where(self.grid < MAP_FREE_THRESHOLD)))
-
-        # DistTransform
-        bin_map = np.where(self.grid >= 50, 0, 255).astype(np.uint8)
-        self.dist = cv2.distanceTransform(bin_map, cv2.DIST_L2, 3)
-
-    def _odom_cb(self, msg: Odometry):
-        """
-        Guardar la pose (x, y, yaw)
-        """
+    # ---------------- Odom ------------------------------------------
+    def odom_cb(self, msg: Odometry):
         p = msg.pose.pose.position
-        q = msg.pose.pose.orientation
+        y = yaw_from_quat(msg.pose.pose.orientation)
+        self.pose = (p.x, p.y, y)
 
-        yaw = math.atan2(2*(q.w*q.z + q.x*q.y),
-                         1 - 2*(q.y*q.y + q.z*q.z))
-        self.pose = (p.x, p.y, yaw)
+    # ---------------- Timer principal --------------------------------
+    def tick(self):
+        # 1) Si estamos girando manualmente
+        if self.rotating:
+            self.update_rotation()
+            return
 
-    # ------------------------------------------------------------------
-    #               BUCLE PRINCIPAL
-    # ------------------------------------------------------------------
-    def _tick(self):
-        """
-        1) Si hay goal activo, no hacer nada.
-        2) Sino, enviamos un nuevo goal si es que hay celdas frontales.
-        """
+        # 2) Si hay goal activo → nada
         if self.goal_active:
             return
 
-        self._send_goal()
+        # 3) ¿Hay frontiers en el haz?
+        if self.frontiers:
+            self.send_frontier_goal()
+        else:
+            # No hay frontiers → giramos 60°
+            self.start_rotation( math.radians(ROT_STEP_DEG) )
 
-    # ------------------------------------------------------------------
-    #               ELECCIÓN DE OBJETIVO
-    # ------------------------------------------------------------------
-    def _send_goal(self):
-        """
-        Filtra celdas seguras (dist >= MIN_DIST_FROM_OBST) y en ±90°.
-        Elige la de mayor distanceTransform y envía un NavigateToPose.
-        """
-        if not (self.nav_cli.server_is_ready() and
-                self.grid is not None and
-                self.dist is not None and
-                self.pose is not None and
-                self.free):
+    # ---------------- Giros manuales ---------------------------------
+    def start_rotation(self, delta_yaw):
+        if self.pose is None:
             return
+        self.rotating      = True
+        self.rot_start_sec = self.get_clock().now().seconds_nanoseconds()[0]
+        self.yaw_start     = self.pose[2]
+        self.rot_target    = self.pose[2] + delta_yaw
+        # normalizar
+        self.rot_target = (self.rot_target + math.pi) % (2*math.pi) - math.pi
+        # publica cmd_vel ang.z
+        twist = Twist()
+        twist.angular.z = ROT_SPEED if delta_yaw > 0 else -ROT_SPEED
+        self.cmd_pub.publish(twist)
 
-        x_r, y_r, yaw_r = self.pose
+    def update_rotation(self):
+        now_sec = self.get_clock().now().seconds_nanoseconds()[0]
+        if self.pose is None:
+            return
+        yaw = self.pose[2]
+        # ¿hemos alcanzado el ángulo objetivo?
+        err = (self.rot_target - yaw + math.pi) % (2*math.pi) - math.pi
+        if abs(err) < 0.05:           # ~3 °
+            # parar
+            self.cmd_pub.publish(Twist())  # cero
+            self.rotating = False
+            return
+        # sigue publicando velocidad
+        twist = Twist()
+        twist.angular.z = ROT_SPEED if err > 0 else -ROT_SPEED
+        self.cmd_pub.publish(twist)
+
+    # ---------------- Enviar goal Nav2 --------------------------------
+    def send_frontier_goal(self):
+        if not self.nav_cli.server_is_ready():
+            return
+        # Elegimos la frontier *más cercana* (dist Euclídea)
+        x_r, y_r, _ = self.pose
         res = self.info.resolution
+        tgt = min(
+            self.frontiers,
+            key=lambda rc: math.hypot(
+                (rc[1]*res + self.info.origin.position.x + res/2) - x_r,
+                (rc[0]*res + self.info.origin.position.y + res/2) - y_r))
+        r, c = tgt
+        gx = c*res + self.info.origin.position.x + res/2
+        gy = r*res + self.info.origin.position.y + res/2
 
-        # 1) Filtrar celdas según MIN_DIST_FROM_OBST
-        safe_cells = []
-        for (r, c) in self.free:
-            d_m = self.dist[r, c] * res
-            if d_m >= MIN_DIST_FROM_OBST:
-                safe_cells.append((r, c))
-
-        if not safe_cells:
-            self.get_logger().warn('No hay celdas seguras delante')
-            return
-
-        # 2) Filtrar en ±90° con respecto al frente
-        front_cells = []
-        for (r, c) in safe_cells:
-            wx = c*res + self.info.origin.position.x + res/2
-            wy = r*res + self.info.origin.position.y + res/2
-
-            dx = wx - x_r
-            dy = wy - y_r
-            angle = math.atan2(dy, dx) - yaw_r
-            while angle > math.pi:
-                angle -= 2*math.pi
-            while angle < -math.pi:
-                angle += 2*math.pi
-
-            if abs(angle) <= MAX_ANG:
-                front_cells.append((r, c))
-
-        if not front_cells:
-            self.get_logger().warn('No hay celdas en ±90° delante')
-            return
-
-        # 3) Elegir la celda con mayor dist
-        r, c = max(front_cells, key=lambda rc: self.dist[rc])
-
-        goal_x = c*res + self.info.origin.position.x + res/2
-        goal_y = r*res + self.info.origin.position.y + res/2
-
-        # Construir el PoseStamped
         pose = PoseStamped()
         pose.header.frame_id = 'map'
         pose.header.stamp    = self.get_clock().now().to_msg()
-        pose.pose.position.x = goal_x
-        pose.pose.position.y = goal_y
+        pose.pose.position.x = gx
+        pose.pose.position.y = gy
+        pose.pose.orientation = quat_from_yaw(self.pose[2])
 
-        # Orientación la dejamos igual al yaw actual
-        q = quaternion_from_yaw(yaw_r)
-        pose.pose.orientation = q
-
-        # Enviar a Nav2
-        goal = NavigateToPose.Goal()
-        goal.pose = pose
-
+        goal = NavigateToPose.Goal(); goal.pose = pose
         self.goal_active = True
-        send = self.nav_cli.send_goal_async(goal)
-        send.add_done_callback(self._goal_resp)
+        fut = self.nav_cli.send_goal_async(goal)
+        fut.add_done_callback(self.goal_resp)
 
-    def _goal_resp(self, fut):
-        """
-        Respuesta a la petición de goal:
-         - Si aceptado => esperamos resultado
-         - Si no => goal_active=False => volverá a intentarlo
-        """
+    def goal_resp(self, fut):
         h = fut.result()
         if not h or not h.accepted:
             self.goal_active = False
             return
+        h.get_result_async().add_done_callback(self.goal_done)
 
-        h.get_result_async().add_done_callback(self._goal_done)
-
-    def _goal_done(self, fut):
-        """
-        Al terminar la navegación => liberamos el flag y a la próxima
-        iteración en _tick() se intentará un nuevo goal.
-        """
-        if fut.result().status != GoalStatus.STATUS_SUCCEEDED:
-            self.get_logger().info(f'Goal end status {fut.result().status}')
+    def goal_done(self, fut):
+        st = fut.result().status
+        if st != GoalStatus.STATUS_SUCCEEDED:
+            self.get_logger().info(f'Goal ended with status {st}')
+        # dejamos un breve cool‑down para no saturar si falla en bucle
+        self.create_timer(GOAL_RETRY_SEC, lambda: None)
         self.goal_active = False
 
-# ------------------------------------------------------------------
+# ---------- main ----------------------------------------------------
 def main(args=None):
     rclpy.init(args=args)
-    rclpy.spin(ForwardExplorer())
+    rclpy.spin(Frontier120Explorer())
     rclpy.shutdown()
 
 if __name__ == '__main__':
