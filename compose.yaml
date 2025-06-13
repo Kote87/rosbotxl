@@ -51,7 +51,7 @@ services:
         use_sim_time:=False
 
   explore_lite:
-    image: husarion/explore-lite:humble
+    image: husarion/explore_lite:humble
     network_mode: "service:navigation"
     depends_on:
       navigation: { condition: service_started }
