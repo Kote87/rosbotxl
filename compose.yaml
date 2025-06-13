@@ -52,7 +52,7 @@ services:
         use_sim_time:=False
 
   explore_lite:
-    image: husarion/explore_lite:humble
+    image: ghcr.io/ros-planning/explore_lite:humble
     network_mode: "service:navigation"
     depends_on:
       navigation: { condition: service_started }
