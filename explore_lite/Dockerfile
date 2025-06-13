@@ -8,7 +8,7 @@ RUN apt-get update && apt-get install -y \
 
 # 2. Workspace
 WORKDIR /ws
-COPY ../explore_lite_src ./src
+COPY explore_lite_src ./src
 
 RUN . /opt/ros/humble/setup.sh && \
     colcon build --symlink-install && \
