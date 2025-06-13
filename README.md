@@ -136,9 +136,11 @@ driver at 1,000,000&nbsp;baud.
    planner. The filter publishes `/scan_front` for Nav2's local
    costmap, while `explore_lite` drives the robot autonomously.
 
+
    The launch starts a front-cone LIDAR filter and the `explore_lite`
    planner. The filter publishes `/scan_front` for Nav2's local
    costmap, while `explore_lite` drives the robot autonomously.
+
 
 ### 🚗 Step 6: Control the ROSbot from a Web Browser
 
