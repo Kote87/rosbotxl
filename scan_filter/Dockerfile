@@ -1,18 +1,17 @@
 FROM ros:humble
 
-# --- refresh ROS 2 key and repo list ---
+# ---------- PARCHE: clave nueva para packages.ros.org (jun-2024) ----------
 RUN set -e ; \
-    apt-get update && apt-get install -y --no-install-recommends \
-        curl gnupg2 lsb-release ; \
+    rm -f /etc/apt/sources.list.d/ros2-*.list ; \
     curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.asc \
         | gpg --dearmor -o /usr/share/keyrings/ros-archive-keyring.gpg ; \
     echo "deb [signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] \
-         http://packages.ros.org/ros2/ubuntu $(lsb_release -cs) main" \
-         > /etc/apt/sources.list.d/ros2.list ; \
+http://packages.ros.org/ros2/ubuntu $(lsb_release -cs) main" \
+        > /etc/apt/sources.list.d/ros2.list ; \
     apt-get update
-# --------------------------------------
+# --------------------------------------------------------------------------
 
-RUN apt-get update && apt-get install -y python3-numpy
+RUN apt-get install -y python3-numpy
 WORKDIR /scan_filter
 COPY front_cone.py .
 ENV RMW_IMPLEMENTATION=rmw_fastrtps_cpp
