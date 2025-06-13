@@ -25,6 +25,8 @@ services:
   scan_filter:
     build: ./scan_filter
     network_mode: "service:navigation"   # comparte DDS
+    depends_on:
+      rplidar: { condition: service_healthy }
     # ⬇️  ya NO hace falta ningún 'command': lo marca ENTRYPOINT
     restart: unless-stopped
 
