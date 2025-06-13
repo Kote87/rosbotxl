@@ -10,5 +10,6 @@ services:
       - /dev/bus/usb:/dev/bus/usb
     command: >
       bash -c "source /opt/ros/humble/setup.bash &&
-               ros2 launch depthai_ros_driver camera.launch.py"
+               ros2 launch depthai_ros_driver camera.launch.py \
+               usb_port_id:=auto"
     restart: unless-stopped
