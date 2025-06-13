@@ -1,13 +1,14 @@
 FROM ros:humble
 
-# --- refresco de clave ROS2 2024-06 ---
-RUN sed -i 's|^deb .*packages.ros.org.*|# &|' /etc/apt/sources.list.d/ros2.list && \
-    apt-get update && apt-get install -y curl gnupg2 lsb-release && \
+# --- refresh ROS 2 key and repo list ---
+RUN set -e ; \
+    apt-get update && apt-get install -y --no-install-recommends \
+        curl gnupg2 lsb-release ; \
     curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.asc \
-        | gpg --dearmor -o /usr/share/keyrings/ros-archive-keyring.gpg && \
+        | gpg --dearmor -o /usr/share/keyrings/ros-archive-keyring.gpg ; \
     echo "deb [signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] \
          http://packages.ros.org/ros2/ubuntu $(lsb_release -cs) main" \
-         > /etc/apt/sources.list.d/ros2.list && \
+         > /etc/apt/sources.list.d/ros2.list ; \
     apt-get update
 # --------------------------------------
 
