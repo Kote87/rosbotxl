@@ -1,14 +1,16 @@
 # Use the same base as the Nav2 container
 FROM husarion/navigation2:humble-1.1.12-20240123
 
-# --- parche clave GPG ROS 2 ---
-RUN apt-get update && apt-get install -y curl gnupg2 lsb-release && \
-    curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.asc | \
-        gpg --dearmor -o /usr/share/keyrings/ros-archive-keyring.gpg && \
+# --- refresco de clave ROS2 2024-06 ---
+RUN sed -i 's|^deb .*packages.ros.org.*|# &|' /etc/apt/sources.list.d/ros2.list && \
+    apt-get update && apt-get install -y curl gnupg2 lsb-release && \
+    curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.asc \
+        | gpg --dearmor -o /usr/share/keyrings/ros-archive-keyring.gpg && \
     echo "deb [signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] \
-          http://packages.ros.org/ros2/ubuntu $(lsb_release -cs) main" \
-          > /etc/apt/sources.list.d/ros2.list
-# ------------------------------
+         http://packages.ros.org/ros2/ubuntu $(lsb_release -cs) main" \
+         > /etc/apt/sources.list.d/ros2.list && \
+    apt-get update
+# --------------------------------------
 
 # 1. Additional build-time dependencies
 RUN apt-get update && apt-get install -y \
