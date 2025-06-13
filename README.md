@@ -126,10 +126,10 @@ driver at 1,000,000&nbsp;baud.
     # or "just rosbot"
     ```
 
-    If this is your first run, build the scan filter image:
+    If this is your first run, build the scan filter and exploration images:
 
     ```bash
-    docker compose build scan_filter
+    docker compose build scan_filter explore_lite
     ```
 
    The launch starts a front-cone LIDAR filter and the `explore_lite`
