@@ -1,16 +1,6 @@
 # Use the same base as the Nav2 container
 FROM husarion/navigation2:humble-1.1.12-20240123
 
-# ---------- PARCHE: clave nueva para packages.ros.org (jun-2024) ----------
-RUN set -e ; \
-    rm -f /etc/apt/sources.list.d/ros2-*.list ; \
-    curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.asc \
-        | gpg --dearmor -o /usr/share/keyrings/ros-archive-keyring.gpg ; \
-    echo "deb [signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] \
-http://packages.ros.org/ros2/ubuntu $(lsb_release -cs) main" \
-        > /etc/apt/sources.list.d/ros2.list ; \
-    apt-get update
-# --------------------------------------------------------------------------
 
 # 1. Additional build-time dependencies
 RUN apt-get install -y --no-install-recommends \
