@@ -1,7 +1,6 @@
 FROM husarion/navigation2:humble-1.1.12-20240123
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ros-humble-nav2-msgs \
+RUN apt-get update && apt-get install -y python3-colcon-common-extensions \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /ws
