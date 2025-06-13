@@ -1,8 +1,18 @@
 FROM husarion/navigation2:humble-1.1.12-20240123
 
-# Adjustable parameters via environment variables
-ENV FREQ="1.0" PROGRESS="60.0"
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ros-humble-nav2-msgs \
+    && rm -rf /var/lib/apt/lists/*
 
-ENTRYPOINT ["ros2", "launch", "explore_lite", "explore.launch.py",
-            "planner_frequency:=${FREQ}", "visualize:=true",
-            "progress_timeout:=${PROGRESS}"]
+WORKDIR /ws
+COPY explore_lite_src ./src
+
+RUN . /opt/ros/humble/setup.sh && \
+    colcon build --symlink-install && \
+    rm -rf /root/.colcon/ ~/.cache && \
+    apt-get clean
+
+ENV RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+CMD ["bash","-c",". /opt/ros/humble/setup.bash && . /ws/install/setup.bash && \
+      ros2 launch explore_lite explore.launch.py \
+        planner_frequency:=1.0 visualize:=true progress_timeout:=60.0"]

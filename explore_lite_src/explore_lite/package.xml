@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>explore_lite</name>
+  <version>0.1.0</version>
+  <description>Placeholder package for explore_lite</description>
+  <maintainer email="example@example.com">Example Maintainer</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <build_depend>rclpy</build_depend>
+  <build_depend>nav2_msgs</build_depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>nav2_msgs</exec_depend>
+
+</package>
