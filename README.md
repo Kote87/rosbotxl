@@ -126,16 +126,11 @@ driver at 1,000,000&nbsp;baud.
     # or "just rosbot"
     ```
 
-    If this is your first run, build the scan filter and exploration images:
+   If this is your first run, build the scan filter image:
 
-    ```bash
-    docker compose build scan_filter explore_lite
-    ```
-
-   The launch starts a front-cone LIDAR filter and the `explore_lite`
-   planner. The filter publishes `/scan_front` for Nav2's local
-   costmap, while `explore_lite` drives the robot autonomously.
-
+   ```bash
+   docker compose build scan_filter
+   ```
 
    The launch starts a front-cone LIDAR filter and the `explore_lite`
    planner. The filter publishes `/scan_front` for Nav2's local
