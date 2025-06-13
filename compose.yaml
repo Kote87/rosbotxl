@@ -52,6 +52,9 @@ services:
 
   explore_lite:
     image: husarion/explore-lite:humble
+
+    image: husarion/explore_lite:humble
+      foxglove
     network_mode: "service:navigation"
     depends_on:
       navigation: { condition: service_started }
