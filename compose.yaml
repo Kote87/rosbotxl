@@ -52,15 +52,11 @@ services:
         use_sim_time:=False
 
   explore_lite:
-    image: ghcr.io/ros-planning/explore_lite:humble
+    build:
+      context: ./explore_lite
     network_mode: "service:navigation"
     depends_on:
       navigation: { condition: service_started }
-    command: >
-      ros2 launch explore_lite explore.launch.py
-        planner_frequency:=1.0
-        visualize:=true
-        progress_timeout:=60.0
     restart: unless-stopped
 
   foxglove:
