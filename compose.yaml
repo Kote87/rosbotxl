@@ -23,16 +23,9 @@ services:
         serial_port:=/dev/ttyUSB1
 
   scan_filter:
-    build:
-      context: ./scan_filter
-    depends_on:
-      rplidar: { condition: service_healthy }
-    network_mode: "service:navigation"
-    command: >
-      ros2 run scan_filter front_cone.py
-        center_deg:=${CENTER_DEG:-106.0}
-        fov_deg:=${FOV_DEG:-120.0}
-
+    build: ./scan_filter
+    network_mode: "service:navigation"   # comparte DDS
+    # ⬇️  ya NO hace falta ningún 'command': lo marca ENTRYPOINT
     restart: unless-stopped
 
   navigation:
@@ -52,11 +45,14 @@ services:
         use_sim_time:=False
 
   explore_lite:
-    build:
-      context: ./explore_lite
+    image: husarion/navigation2:humble-1.1.12-20240123
     network_mode: "service:navigation"
     depends_on:
       navigation: { condition: service_started }
+    command: >
+      ros2 launch explore_lite explore.launch.py
+        planner_frequency:=1.0
+        visualize:=true
     restart: unless-stopped
 
   foxglove:
