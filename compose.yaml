@@ -23,7 +23,9 @@ services:
         serial_port:=/dev/ttyUSB1
 
   scan_filter:
-    build: ./scan_filter
+    build:
+      context: .
+      dockerfile: docker/scan_filter/Dockerfile
     network_mode: "service:navigation"   # comparte DDS
     depends_on:
       rplidar: { condition: service_healthy }
@@ -50,7 +52,8 @@ services:
 
   explore_lite:
     build:
-      context: ./explore_lite
+      context: .
+      dockerfile: docker/explore_lite/Dockerfile
     network_mode: "service:navigation"
     depends_on:
       navigation: { condition: service_started }

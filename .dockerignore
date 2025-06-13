@@ -1,0 +1,11 @@
+# Ignore cache and build artifacts
+**/__pycache__/
+*.pyc
+build/
+install/
+log/
+
+# Ignore maps and bag files
+maps/
+*.bag
+*.log
