@@ -12,5 +12,7 @@ WORKDIR /ws
 RUN . /opt/ros/humble/setup.sh && \
     colcon build --symlink-install
 
+ENV ROS_WS=/ws
+
 ENTRYPOINT ["/ros_entrypoint.sh"]
 CMD ["ros2", "run", "scan_filter", "front_cone"]
