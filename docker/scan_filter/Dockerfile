@@ -14,5 +14,6 @@ RUN . /opt/ros/humble/setup.sh && \
 
 ENV ROS_WS=/ws
 
-ENTRYPOINT ["/ros_entrypoint.sh"]
+COPY docker/ros_ws_entrypoint.sh /ros_ws_entrypoint.sh
+ENTRYPOINT ["/ros_ws_entrypoint.sh"]
 CMD ["ros2", "run", "scan_filter", "front_cone"]

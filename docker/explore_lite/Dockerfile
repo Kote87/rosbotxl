@@ -13,6 +13,8 @@ RUN . /opt/ros/humble/setup.sh && \
     rm -rf /root/.colcon/ ~/.cache && \
     apt-get clean
 
-ENTRYPOINT ["/ros_entrypoint.sh"]
+ENV ROS_WS=/ws
+COPY docker/ros_ws_entrypoint.sh /ros_ws_entrypoint.sh
+ENTRYPOINT ["/ros_ws_entrypoint.sh"]
 CMD ["ros2", "launch", "explore_lite", "explore.launch.py", \
      "planner_frequency:=1.0", "visualize:=true", "progress_timeout:=60.0"]
