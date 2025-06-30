@@ -138,3 +138,17 @@ _install-yq:
         chmod +x /usr/bin/yq
         echo "yq installed successfully!"
     fi
+teleop:
+    @echo "Starting sensors and teleop..."
+    # 1) Arranca todos los contenedores en segundo plano,
+    #    excepto los que duermen (navigation)
+    docker compose -f compose.yaml -f compose.override.yaml -f docker-compose.override.yml up -d
+    # 2) Muestra instrucciones y se adjunta a teleop
+    @echo "╭─────────────────────────────────────────────"
+    @echo "│  Controles:  W/S = avanzar/retroceder"
+    @echo "│              A/D = girar izquierda/derecha"
+    @echo "│              Q/E = giro suave"
+    @echo "│  Salir: Ctrl-P  Ctrl-Q   (deja el nodo vivo)"
+    @echo "╰─────────────────────────────────────────────"
+    docker attach teleop
+
