@@ -62,7 +62,7 @@ services:
     restart: unless-stopped
 
   foxglove:
-    image: husarion/foxglove:1.84.0
+    image: husarion/foxglove:studio
     restart: unless-stopped
     ports:
       - 8080:8080
