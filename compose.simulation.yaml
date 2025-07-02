@@ -35,8 +35,8 @@ services:
         map:=/maps/map.yaml
         use_sim_time:=True
 
-  foxglove:
-    image: husarion/foxglove:1.84.0
+    foxglove:
+      image: husarion/foxglove:studio
     ports:
       - 8080:8080
       - 8765:8765
