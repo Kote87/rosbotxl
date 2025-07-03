@@ -1,54 +1,56 @@
+# docker-compose.override.yml
 version: "3.5"
 
 services:
-  # ───── 1) Dormimos la navegación / explore_lite  ─────
-  navigation:
-    command: [ "bash", "-c", "echo 'explore_lite disabled by override'; sleep infinity" ]
+  # ───────── 1) Rosbot sin cámara OAK ─────────
+  rosbot:
+    command: >
+      ros2 launch rosbot_xl_bringup bringup.launch.py
+        mecanum:=${MECANUM:-True}
+        enable_oak:=false          # ← DESACTIVA la cámara
 
-  # ───── 2) Añadimos teleop_twist_keyboard  ─────
+  # ───────── 2) Tele‑op por teclado ─────────
   teleop:
     image: husarion/rosbot-xl:humble-0.10.0-20240202
     network_mode: host
     privileged: true
     stdin_open: true
     tty: true
-    environment:
-      - ROS_DOMAIN_ID=0
+    environment: [ ROS_DOMAIN_ID=0 ]
     depends_on:
-      - rosbot
+      rosbot: { condition: service_healthy }
     command: >
-      bash -c "
-        source /opt/ros/humble/setup.bash &&
-        ros2 run teleop_twist_keyboard teleop_twist_keyboard
-          cmd_vel:=/cmd_vel"
+      bash -c "source /opt/ros/humble/setup.bash &&
+               ros2 run teleop_twist_keyboard teleop_twist_keyboard
+                 cmd_vel:=/cmd_vel"
 
-  # ────────────────────────────────
-  # Puente ROS 2 ⇆ Foxglove WebSocket
-  # ────────────────────────────────
-  # UI web: sólo 8080 -> host
+  # ───────── 3) Congelar explore_lite/Nav2 ─────────
+  navigation:
+    command: [ "bash","-c","echo 'explore_lite disabled'; sleep infinity" ]
+  explore_lite:
+    command: [ "bash","-c","echo 'explore_lite disabled'; sleep infinity" ]
+
+  # ───────── 4) Foxglove UI (sin cambios) ─────────
   foxglove:
-    image: husarion/foxglove:studio
+    image: husarion/foxglove:studio          # tu UI habitual
     network_mode: bridge
-    ports:
-      - "8080:8080"
+    ports: [ "8080:8080" ]
     environment:
       - DS_HOST=foxglove-ds
       - DS_PORT=8765
 
-  # Bridge ROS <-> WebSocket
+  # ───────── 5) Foxglove bridge actualizado ─────────
   foxglove-ds:
-    image: husarion/foxglove-bridge:humble-0.7.3-20240108
+    image: husarion/foxglove-bridge:humble-0.8.7   # ← VERSIÓN NUEVA
     network_mode: bridge
     privileged: true
-    ports:
-      - "8765:8765"
-    environment:
-      - ROS_DOMAIN_ID=0
+    ports: [ "8765:8765" ]
+    environment: [ ROS_DOMAIN_ID=0 ]
     depends_on:
-      rosbot:
-        condition: service_healthy
+      rosbot:  { condition: service_healthy }
+      rplidar: { condition: service_healthy }
     command: >
-      ros2 launch foxglove_bridge foxglove_bridge_launch.xml
-        address:=0.0.0.0
-        port:=8765
-        use_compressed:=true
+      foxglove_bridge
+        --send-buffer-bytes 33554432   # 32 MB
+        --max-channels 256             # sobra espacio
+        --ignore-unknown-types
